@@ -1,8 +1,0 @@
-{
-  "private": true,
-  "name": "controle-ferias-brixly-preview-adapter",
-  "description": "Adaptação mínima e exclusiva do mecanismo de preview/publicação da Brixly (ver PLAN.md, 'Atualização do plano — adaptação de preview da Brixly'). NÃO faz parte da arquitetura final do projeto (backend/ + frontend/ + Docker Compose): existe apenas porque a heurística de detecção de app da Brixly não consegue identificar frontend/ automaticamente, já que backend/ e frontend/ possuem package.json próprios. Este arquivo deve ser removido antes da entrega final caso não seja necessário no ambiente de execução real (Docker).",
-  "scripts": {
-    "build": "npm --prefix frontend ci && npm --prefix frontend run build && rm -rf dist && cp -r frontend/dist dist"
-  }
-}
