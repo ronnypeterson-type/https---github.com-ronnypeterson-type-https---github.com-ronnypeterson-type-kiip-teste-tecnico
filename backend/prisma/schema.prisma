@@ -1,0 +1,54 @@
+// Schema do sistema de controle de férias.
+//
+// Decisões de modelagem registradas em PLAN.md, seção
+// "Atualização do plano — decisões de modelagem e domínio":
+// - Período aquisitivo NÃO é uma tabela própria: é calculado sob demanda
+//   pelo domínio a partir de Colaborador.dataAdmissao + Agendamento.periodoNumero.
+// - Período concessivo, saldo, remuneração, terço e total NÃO são persistidos:
+//   são sempre derivados pelo domínio no momento da consulta.
+// - Datas de negócio usam o tipo DATE (sem horário, sem timezone).
+// - Salário usa Decimal/NUMERIC, nunca Float/number.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Constraint "salario_mensal > 0" é aplicada via CHECK na migration SQL
+// (prisma/migrations/.../migration.sql), pois o Prisma Schema Language
+// nesta versão não oferece uma diretiva declarativa de CHECK constraint.
+model Colaborador {
+  id            Int      @id @default(autoincrement())
+  nome          String
+  dataAdmissao  DateTime @map("data_admissao") @db.Date
+  salarioMensal Decimal  @map("salario_mensal") @db.Decimal(10, 2)
+
+  agendamentos Agendamento[]
+
+  @@map("colaboradores")
+}
+
+enum StatusAgendamento {
+  ativo
+  cancelado
+}
+
+// Constraints "periodo_numero >= 1" e "quantidade_dias BETWEEN 1 AND 30"
+// são aplicadas via CHECK na migration SQL, pelo mesmo motivo acima.
+model Agendamento {
+  id             Int               @id @default(autoincrement())
+  colaboradorId  Int               @map("colaborador_id")
+  periodoNumero  Int               @map("periodo_numero")
+  dataInicio     DateTime          @map("data_inicio") @db.Date
+  quantidadeDias Int               @map("quantidade_dias")
+  status         StatusAgendamento @default(ativo)
+
+  colaborador Colaborador @relation(fields: [colaboradorId], references: [id])
+
+  @@index([colaboradorId])
+  @@map("agendamentos")
+}
