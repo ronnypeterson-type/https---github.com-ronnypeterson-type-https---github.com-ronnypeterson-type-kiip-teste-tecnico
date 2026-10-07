@@ -432,3 +432,62 @@ Ponto de atenção corrigido durante a implementação: a primeira versão desta
 ### 3. Validação da proteção de concorrência
 
 Esta decisão foi implementada e validada estaticamente (type-check, build, revisão de código), mas a prova de que o lock efetivamente serializa duas transações concorrentes só pode ser obtida executando o teste de concorrência (`tests/integration/concorrencia-agendamento.test.ts`) contra um PostgreSQL real — o que não foi possível nesta etapa, pois este ambiente de desenvolvimento não possui PostgreSQL disponível. Essa validação externa permanece pendente, como já registrado na seção "16. Validação externa" do plano original.
+
+---
+
+## Atualização do plano — decisões da API REST (HTTP)
+
+Esta seção registra decisões tomadas na etapa de implementação da camada HTTP (Express), realizada após a implementação e commit da persistência real e do mecanismo de lock/transação. O conteúdo original deste `PLAN.md` e as atualizações anteriores foram mantidos integralmente.
+
+### 1. Rota de cancelamento: ajuste em relação à decisão anterior
+
+A seção "Atualização do plano — decisões da camada de aplicação", item 2, havia registrado `DELETE /agendamentos/:id` como a rota de cancelamento. Na implementação da API HTTP, a rota final ficou aninhada sob o colaborador: `DELETE /colaboradores/:id/ferias/:agendamentoId`.
+
+**Decisão**: manter o cancelamento aninhado sob `/colaboradores/:id/ferias/:agendamentoId`, em vez de uma rota de nível superior `/agendamentos/:id`.
+
+**Motivo**: todos os demais endpoints de férias já são aninhados sob `/colaboradores/:id` (`POST .../ferias`, `GET .../ferias`, `GET .../periodos`); manter o cancelamento no mesmo padrão evita misturar dois estilos de rota (aninhado vs. nível superior) para o mesmo recurso. O `:id` do colaborador na rota é validado apenas quanto ao formato (inteiro positivo), mas não é usado para localizar o agendamento — o `agendamentoId` já identifica o registro de forma única; a decisão de cancelamento lógico (alterar `status` para `cancelado`, preservando o registro) permanece exatamente como já decidido anteriormente, sem alteração.
+
+### 2. Serialização monetária na resposta HTTP: string decimal, nunca `number`
+
+**Decisão**: todo valor monetário (`salarioMensal`, `valores.remuneracao`, `valores.tercoConstitucional`, `valores.total`) é serializado como **string decimal** com 2 casas (ex.: `"1633.33"`), nunca como `number` JSON.
+
+**Motivo**: o domínio representa dinheiro como `bigint` de centavos; `bigint` não pode ser serializado diretamente por `JSON.stringify` (lança `TypeError`), e convertê-lo para `number` reintroduziria o próprio problema de ponto flutuante que a escolha de `bigint` no domínio evitou desde a etapa de domínio puro. A conversão `bigint → string` usa apenas divisão/resto inteiros de `bigint` (nunca `Number`), e o caminho inverso (`parseSalarioDoRequest`, na entrada) usa apenas regex + `BigInt`, preservando centavos exatos em ambas as direções (validado com o caso de borda `5n → "0.05"` e com o exemplo numérico do próprio enunciado).
+
+### 3. Mapeamento de erro de domínio/aplicação para status HTTP
+
+**Decisão**:
+- `RegraNegocioError` (violação de R1-R7) → **422 Unprocessable Entity**, corpo `{"error":{"code":"R1".."R7","message":"..."}}`.
+- `RecursoNaoEncontradoError` (colaborador/agendamento inexistente) → **404 Not Found**, `code: "NAO_ENCONTRADO"`.
+- `ConflitoDeEstadoError` (ex.: cancelar agendamento já cancelado) → **409 Conflict**, `code: "CONFLITO"`.
+- `EntradaInvalidaError`/`EntradaHttpInvalidaError` (formato/tipo/campo ausente) → **400 Bad Request**, `code: "ENTRADA_INVALIDA"`.
+- Qualquer outro erro (não mapeado, incluindo falha de parsing do body JSON) → **500 Internal Server Error**, mensagem genérica fixa, nunca a mensagem/stack original.
+
+**Motivo**: 422 (não 400) para regra de negócio porque a entrada é estruturalmente válida (tipos e formato corretos) — o que a rejeita é uma regra do domínio, não o formato da requisição; essa distinção mantém 400 reservado exclusivamente para problemas de formato/estrutura, nunca de regra de negócio, evitando ambiguidade para quem consome a API. A tradução erro→status é centralizada em uma única função (`responderComErro`), nunca decidida individualmente por cada controller, para impedir inconsistência entre endpoints.
+
+### 4. Testes HTTP sem PostgreSQL real: app Express real + repositories fake
+
+**Decisão**: os testes HTTP (Supertest) usam o mesmo `createApp` de produção, mas com `ColaboradorRepositoryFake`/`AgendamentoRepositoryFake` (os mesmos fakes em memória já usados nos testes de application service) injetados em vez dos repositories Prisma.
+
+**Motivo**: este ambiente de desenvolvimento não possui PostgreSQL disponível (restrição já registrada em etapas anteriores). Trocar apenas a fonte de persistência, mantendo o Express real, o roteamento real, os controllers reais e os application services reais, permite testar de fato a integração HTTP↔application↔domínio via requisições HTTP reais (não chamando controllers diretamente), sem depender de banco — ao custo de não validar a integração real com Prisma/PostgreSQL nesta etapa, o que permanece pendente como validação externa (mesma pendência já registrada para o teste de concorrência).
+
+---
+
+## Atualização do plano — correções pós-revisão da API REST
+
+Esta seção registra duas correções pontuais feitas após a revisão crítica da etapa anterior (API REST), antes do commit daquela etapa. O conteúdo original deste `PLAN.md` e as atualizações anteriores foram mantidos integralmente; esta seção apenas corrige/complementa pontos específicos.
+
+### 1. Semântica de "hoje" para R6: data civil de America/Sao_Paulo, não UTC
+
+A implementação original de `hojeComoCalendarDate()` (então em `serializacao.ts`) calculava "hoje" usando `new Date()` + `getUTCFullYear/getUTCMonth/getUTCDate` — ou seja, a data civil em UTC. Isso é problemático porque R6 depende diretamente de "hoje", e o projeto trabalha com semântica de calendário civil de America/Sao_Paulo (UTC-3): entre 21h00 e 23h59 no horário de Brasília, a data já virou em UTC mas ainda não virou em São Paulo, fazendo a API considerar erroneamente "hoje" como o dia seguinte ao dia civil real do projeto.
+
+**Decisão**: `hojeComoCalendarDate()` foi movida para um novo arquivo dedicado, `src/http/relogio.ts`, e passou a derivar a data civil via `Intl.DateTimeFormat` com `timeZone: "America/Sao_Paulo"` fixo (função pura `dataCivilEmSaoPaulo(instante: Date): CalendarDate`), em vez dos componentes UTC do `Date`. A obtenção do instante (`new Date()`) permanece isolada na borda HTTP — nenhuma função de domínio passou a usar `Date`, nenhuma regra R1-R7 foi alterada, e nenhum cálculo de duração (soma/diferença de dias) usa timezone; apenas a leitura de "agora" ganhou o fuso horário correto.
+
+**Motivo da abstração mínima**: separar `dataCivilEmSaoPaulo(instante)` (pura, recebe o instante) de `hojeComoCalendarDate()` (sem argumento, usa `new Date()` real) permite testar deterministicamente o cenário de risco (virada de dia por timezone) com instantes fixos, sem depender do relógio real da máquina nem introduzir fake timers — sem criar um framework de "clock" genérico, que não era necessário para este caso pontual.
+
+### 2. JSON malformado no corpo da requisição: 400, não 500
+
+Erro de parsing do `express.json()` (corpo da requisição não é um JSON válido) estava caindo no tratamento genérico de "erro inesperado" (500), por não ser nenhum dos tipos de erro de domínio/aplicação reconhecidos.
+
+**Decisão**: `responderComErro` passou a identificar especificamente esse erro (um `SyntaxError` do `body-parser`, com a propriedade `type === "entity.parse.failed"`, confirmado por execução real contra a versão do Express usada neste projeto) e mapeá-lo para **400 Bad Request**, `code: "ENTRADA_INVALIDA"`, com uma mensagem fixa e segura ("O corpo da requisição não é um JSON válido."), nunca a mensagem original do parser (que pode incluir um trecho do body enviado pelo cliente).
+
+**Motivo**: um corpo de requisição sintaticamente inválido é, por natureza, um erro de formato da entrada do cliente — a mesma categoria de `EntradaHttpInvalidaError` (400) já usada para os demais problemas de formato —, não um erro inesperado do servidor (500). Detectar o erro pela propriedade `type` (em vez de `instanceof SyntaxError` genérico) evita capturar por engano um `SyntaxError` de outra origem (um bug real de código) como se fosse entrada inválida do cliente.
