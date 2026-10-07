@@ -284,3 +284,105 @@ O projeto será considerado concluído quando:
 - Ferramenta exata de testes de API (supertest ou alternativa equivalente) — a ser confirmada na etapa de implementação da API.
 - Granularidade final dos commits por regra de negócio (um commit por regra versus múltiplos commits por regra, conforme a complexidade real de cada uma durante a implementação).
 - Formato exato da documentação da API (arquivo Markdown próprio, OpenAPI/Swagger, ou documentação embutida no README) — ainda não escolhido.
+
+---
+
+## Atualização do plano — decisões de modelagem e domínio
+
+Esta seção registra decisões tomadas após uma análise técnica aprofundada de modelagem de dados e estratégia de domínio, realizada após a elaboração do plano original acima. O conteúdo original deste `PLAN.md` foi mantido integralmente; esta seção apenas resolve pendências que haviam sido deixadas abertas na seção "19. Decisões ainda não definidas" e detalha decisões de modelagem que não estavam explícitas na versão original.
+
+### 1. Períodos aquisitivos
+
+Os períodos aquisitivos NÃO serão persistidos como tabela própria no banco de dados.
+
+Eles serão calculados sob demanda a partir de:
+- data de admissão do colaborador;
+- número sequencial do período (`periodo_numero`).
+
+A função de domínio responsável será determinística e pura:
+
+```
+calcularPeriodoAquisitivo(dataAdmissao, periodoNumero)
+```
+
+O período concessivo também será derivado do período aquisitivo (fim do aquisitivo + 1 dia até 12 meses depois), nunca persistido separadamente.
+
+Justificativa:
+- não existe estado próprio do período aquisitivo no escopo do teste;
+- suas datas são completamente deriváveis a partir da data de admissão;
+- evita duplicação de dados;
+- evita problemas de sincronização entre o dado persistido e o dado real;
+- simplifica o cancelamento e a consulta de saldo (saldo é sempre recomputado a partir dos agendamentos ativos, nunca armazenado);
+- mantém as regras R1/R2 concentradas inteiramente no domínio, sem estado intermediário no banco.
+
+### 2. Modelo do agendamento
+
+O agendamento persistirá:
+
+- `id`;
+- `colaborador_id`;
+- `periodo_numero`;
+- `data_inicio`;
+- `quantidade_dias`;
+- `status`.
+
+`periodo_numero` NÃO será uma `FOREIGN KEY` para uma tabela de períodos aquisitivos, pois essa tabela não existirá. O período aquisitivo real será reconstruído pelo domínio através da combinação `data_admissao` (do colaborador) + `periodo_numero` (do agendamento).
+
+A data final do agendamento será derivada de:
+
+```
+data_inicio + quantidade_dias - 1
+```
+
+Não será persistida como coluna própria, salvo se uma necessidade concreta futura justificar essa mudança.
+
+### 3. Datas de calendário
+
+Datas de negócio serão tratadas como datas de calendário, nunca como timestamp:
+- na API: strings `YYYY-MM-DD`;
+- no banco: tipo `DATE`;
+- no domínio: um value object próprio `CalendarDate` (ano/mês/dia);
+- todas as operações de calendário (soma de dias, comparação, aniversário, último dia do mês) serão feitas por aritmética explícita de ano/mês/dia;
+- sem dependência de timezone em nenhum cálculo de regra de negócio;
+- sem utilizar o objeto `Date` do JavaScript para cálculos de regras de negócio (R1, R2, R4, R6).
+
+Não será adicionada nenhuma biblioteca de datas de terceiros nesta etapa. O conjunto de operações necessárias foi avaliado como pequeno e suficientemente simples para ser implementado e testado como código próprio, com risco de bug menor do que o de introduzir uma dependência externa cujo comportamento de timezone precisaria ser auditado da mesma forma.
+
+### 4. Valores monetários
+
+- O PostgreSQL utilizará `NUMERIC(10,2)` para a coluna de salário.
+- O Prisma utilizará seu tipo `Decimal` para mapear essa coluna.
+- Os cálculos de R7 (remuneração e terço constitucional) utilizarão `Prisma.Decimal` diretamente, sem conversão para `number` em nenhum momento do cálculo.
+- Multiplicação e divisão serão realizadas mantendo precisão decimal completa, sem arredondamento intermediário.
+- Remuneração e terço serão arredondados individualmente para 2 casas decimais utilizando o modo `ROUND_HALF_UP` (meio centavo sobe).
+- O total será a soma dos dois valores já arredondados, não o arredondamento da soma.
+
+Não será adicionada a biblioteca `decimal.js` como dependência direta do projeto. Foi verificado que `Prisma.Decimal` é internamente a própria implementação de `decimal.js`, reexportada pelo runtime do Prisma com API equivalente (incluindo `times`, `dividedBy`, `toDecimalPlaces` com modo de arredondamento explícito e `plus`). Essa verificação incluiu a execução real do exemplo numérico do enunciado (salário R$ 3.500,00, 14 dias), confirmando os resultados esperados (remuneração R$ 1.633,33, terço R$ 544,44, total R$ 2.177,77). Adicionar `decimal.js` separadamente duplicaria uma dependência já disponível através do `@prisma/client`.
+
+### 5. Integridade
+
+Constraints planejadas para o banco de dados:
+- `colaborador.nome`: obrigatório;
+- `colaborador.data_admissao`: obrigatória;
+- `colaborador.salario_mensal`: obrigatório e positivo;
+- `agendamento.colaborador_id`: obrigatório (referência ao colaborador);
+- `agendamento.periodo_numero`: obrigatório, maior ou igual a 1;
+- `agendamento.quantidade_dias`: obrigatório, entre 1 e 30;
+- `agendamento.status`: limitado aos valores `ativo` ou `cancelado`.
+
+R3 (fracionamento) e R5 (sobreposição) permanecem regras de domínio/aplicação e não serão reduzidas a simples `CHECK` de banco, por dependerem de comparação entre múltiplas linhas existentes, não de validação de uma linha isolada.
+
+### 6. Índices
+
+Considerando o escopo do teste e a ausência de requisitos de performance ou escala, será utilizado somente o índice necessário para consultas de agendamentos por colaborador (`agendamento.colaborador_id`). Nenhum índice especulativo será adicionado.
+
+### 7. Decisões substituídas
+
+Esta atualização resolve as seguintes pendências que estavam registradas na seção "19. Decisões ainda não definidas" do plano original:
+
+- **Períodos aquisitivos**: estavam em aberto entre "persistidos" ou "calculados sob demanda" — decidido: calculados sob demanda, sem tabela própria.
+- **Estratégia de datas**: estava em aberto entre "estrutura própria" ou "biblioteca de terceiros" — decidido: value object `CalendarDate` próprio, sem biblioteca.
+- **Estratégia monetária**: não havia decisão registrada ainda — decidido: `Prisma.Decimal`, sem `decimal.js`.
+- **Modelo do agendamento**: não havia detalhamento registrado ainda sobre como o agendamento referenciaria o período aquisitivo — decidido: campo `periodo_numero` (inteiro), não uma `FOREIGN KEY`.
+
+O texto original da seção 19 não foi removido nem alterado; esta seção apenas registra que as pendências correspondentes foram resolvidas.
