@@ -27,3 +27,12 @@ Thumbs.db
 .lovable.json
 .chats/
 .checkpoints/
+
+# Adaptação de preview/publicação da Brixly (ver PLAN.md, "Atualização do
+# plano — adaptação de preview da Brixly"): artefatos gerados pelo
+# mecanismo de preview/publish da Brixly a partir do package.json da
+# raiz. Regras ancoradas na raiz (prefixo "/") para não afetar os
+# lockfiles reais do projeto (frontend/package-lock.json,
+# backend/package-lock.json), que continuam versionados normalmente.
+/dist_pub/
+/package-lock.json

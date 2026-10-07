@@ -491,3 +491,72 @@ Erro de parsing do `express.json()` (corpo da requisição não é um JSON váli
 **Decisão**: `responderComErro` passou a identificar especificamente esse erro (um `SyntaxError` do `body-parser`, com a propriedade `type === "entity.parse.failed"`, confirmado por execução real contra a versão do Express usada neste projeto) e mapeá-lo para **400 Bad Request**, `code: "ENTRADA_INVALIDA"`, com uma mensagem fixa e segura ("O corpo da requisição não é um JSON válido."), nunca a mensagem original do parser (que pode incluir um trecho do body enviado pelo cliente).
 
 **Motivo**: um corpo de requisição sintaticamente inválido é, por natureza, um erro de formato da entrada do cliente — a mesma categoria de `EntradaHttpInvalidaError` (400) já usada para os demais problemas de formato —, não um erro inesperado do servidor (500). Detectar o erro pela propriedade `type` (em vez de `instanceof SyntaxError` genérico) evita capturar por engano um `SyntaxError` de outra origem (um bug real de código) como se fosse entrada inválida do cliente.
+
+---
+
+## Atualização do plano — decisões do frontend
+
+Esta seção registra decisões tomadas na etapa de implementação do frontend (React + Vite + TypeScript + Tailwind, consumindo a API REST já existente). O conteúdo original deste `PLAN.md` e as atualizações anteriores foram mantidos integralmente — em particular, a seção "10. Frontend planejado" do plano original mencionava um "formulário de cadastro de colaborador" na UI; essa intenção inicial foi **revista** nesta etapa (ver item 2 abaixo) e substituída pela decisão de manter a criação de colaborador exclusivamente via API.
+
+### 1. Novo endpoint `GET /colaboradores` (somente leitura)
+
+O contrato de API definido no enunciado do teste e já implementado no Bloco 4 não incluía nenhuma rota para **listar** colaboradores — apenas `POST /colaboradores` (criar) e rotas que operam sobre um `:id` já conhecido (`GET .../periodos`, `POST .../ferias`, etc.). Sem alguma forma de descobrir quais colaboradores existem, a UI não tem como oferecer a seleção de colaborador exigida pelo teste (requisito funcional mínimo do frontend).
+
+**Decisão**: foi adicionado `GET /colaboradores`, que retorna a lista de colaboradores cadastrados (`{ "colaboradores": [{ id, nome, dataAdmissao, salarioMensal }] }`), reaproveitando o método `listar(): Promise<Colaborador[]>` que **já existia** na interface `ColaboradorRepository` (e em ambas as implementações, Prisma e fake) desde etapas anteriores, mas que não possuía nenhuma rota HTTP associada. Foi criado um caso de uso dedicado, `listarColaboradores`, para que o controller continuasse sem acessar o repository diretamente (mesmo padrão dos demais endpoints).
+
+**Por que isso não viola "criação de colaborador é API-only"**: o requisito de "API-only" refere-se especificamente à **criação** de colaboradores — isto é, não existir um formulário de cadastro na UI, para que a criação só ocorra por uma chamada HTTP explícita (POST), controlada por quem está operando a API diretamente (ex.: o avaliador do teste, via curl/Postman). `GET /colaboradores` é estritamente **leitura**: não cria, não altera e não remove nenhum colaborador; `POST /colaboradores` continua sendo o único meio de criar um colaborador, e o frontend desta etapa não o invoca em nenhum fluxo. Portanto, a UI pode listar colaboradores já criados por outro meio (API) sem comprometer o requisito.
+
+**Alternativas consideradas e descartadas**:
+- Pedir ao usuário da UI que digite o `id` do colaborador manualmente, sem nenhuma listagem: foi descartada por ser uma experiência pior sem nenhum ganho real de conformidade com o requisito (o requisito é sobre criação, não sobre listagem), e por não atender bem ao pedido explícito do bloco ("selecionar colaborador").
+- Hardcodear um colaborador fixo de demonstração no frontend: foi descartada por ser uma gambiarra que mascararia a ausência de integração real com múltiplos colaboradores.
+
+### 2. Criação de colaborador: confirmação da decisão de não ter formulário na UI
+
+O plano original (seção "10. Frontend planejado") previa um "formulário de cadastro de colaborador" como parte do frontend. Essa intenção foi substituída nesta etapa.
+
+**Decisão**: o frontend não possui, em nenhuma tela, um formulário para criar colaborador. A criação permanece possível apenas via `POST /colaboradores` (API), conforme instrução explícita recebida para este bloco.
+
+**Motivo**: o teste técnico determina explicitamente que a criação de colaborador deve ser feita apenas via API, não pela interface. Mantida a decisão conforme instrução, atualizando o plano original que ainda não refletia essa restrição.
+
+### 3. Tipos TypeScript do frontend: derivados do contrato HTTP, não duplicando os tipos do backend
+
+**Decisão**: o frontend define seus próprios tipos (`src/types/`), descrevendo exatamente o formato JSON trocado com a API (ex.: `Periodo { periodoNumero: number; aquisitivoInicio: string; ...; diasDisponiveis: number }`, com datas e dinheiro como `string`) — não importa nem reexporta nenhum tipo do backend (`CalendarDate`, `bigint`, etc.), já que frontend e backend são processos/times de build independentes, comunicando-se apenas por HTTP/JSON.
+
+**Motivo**: evita qualquer tentação de reintroduzir `bigint`/`CalendarDate` no lado do cliente (impossível de qualquer forma, pois `bigint` não atravessa JSON) e mantém a fronteira HTTP como única fonte de verdade do contrato — qualquer mudança de contrato precisa ser refletida explicitamente nos tipos do frontend, nunca "herdada" silenciosamente de um tipo do backend.
+
+---
+
+## Atualização do plano — adaptação de preview da Brixly
+
+Esta seção registra uma adaptação pontual feita exclusivamente para contornar uma limitação do mecanismo de preview/publicação do AMBIENTE de desenvolvimento (Brixly), sem nenhuma relação com as regras de negócio, a API ou a arquitetura final exigida pelo teste. O conteúdo original deste `PLAN.md` e as atualizações anteriores foram mantidos integralmente.
+
+### Contexto
+
+A estrutura final deste projeto é, e continua sendo, um monorepo com `backend/` e `frontend/` separados, comunicando-se via HTTP, conforme planejado desde a seção inicial deste documento. Essa estrutura é exigida pelo teste técnico e não foi alterada por esta adaptação.
+
+O ambiente de desenvolvimento (Brixly) tenta automaticamente identificar, buildar e servir um "app" para exibir no preview visual e permitir a publicação. O mecanismo de detecção usado pela Brixly procura, na raiz do projeto, um `package.json` ou `index.html`; se não encontrar, procura exatamente **uma** subpasta que tenha um desses arquivos. Como este projeto tem **duas** subpastas candidatas (`backend/package.json` e `frontend/package.json`), essa heurística não consegue decidir qual delas é o frontend, cai de volta para a raiz (que não tem nenhum app) e nunca builda nada — o preview continuava mostrando um placeholder antigo, pré-existente, e o botão de publicação indicava "não há nada para publicar".
+
+### Decisão
+
+Foi criado um `package.json` mínimo na **raiz** do projeto (fora de `backend/` e `frontend/`), contendo apenas:
+- `"private": true` (nunca será publicado em nenhum registro npm);
+- nenhum campo `dependencies`/`devDependencies` próprio;
+- um único script `build`, que instala as dependências de `frontend/` (via `npm --prefix frontend ci`), builda o frontend com seu próprio `npm run build` (via `npm --prefix frontend run build`), e copia o resultado (`frontend/dist`) para `./dist` na raiz — que é o diretório que o mecanismo de preview da Brixly efetivamente lê e serve.
+
+Essa adaptação:
+- não move `backend/` nem `frontend/`;
+- não copia nenhum código-fonte do frontend para a raiz (só o artefato de build final, `dist/`, que já era gitignored e nunca fez parte do código-fonte versionado);
+- não cria uma segunda implementação do frontend — o build real continua ocorrendo inteiramente dentro de `frontend/`, com as mesmas ferramentas (Vite, TypeScript) já em uso;
+- não depende do `backend/` para buildar o frontend (o script nunca referencia `backend/`);
+- não altera nenhum endpoint, nenhuma regra R1-R7, nenhum componente do frontend já implementado.
+
+### Validação realizada
+
+Esta adaptação foi validada chamando diretamente as funções reais do módulo de preview da Brixly (`lovable.preview`, não uma reimplementação própria) contra este projeto:
+- `_app_root(project_dir)` passou a retornar a própria raiz do projeto (antes retornava a raiz por ambiguidade/falha; agora retorna a raiz porque ela tem um `package.json` válido, satisfazendo a heurística de forma inequívoca).
+- `_build(project_dir, pid)` (a mesma função usada internamente por `start_preview`/`check_build`/`build_public`) executou com sucesso (retornou `None`, sem erro), gerando `./dist/index.html` com `<base href="/preview/2e22967b/">` injetado e os assets do bundle novo.
+- Uma requisição HTTP real contra o servidor do preview em execução (`/preview/2e22967b/`) confirmou que o HTML e o JavaScript servidos correspondem à interface funcional implementada no Bloco 5 (`PaginaControleFerias`), sem nenhum traço do placeholder antigo.
+
+### Esta adaptação NÃO faz parte da arquitetura de execução final
+
+O `docker-compose.yml` final não lerá nem dependerá, em nenhum momento, deste `package.json` da raiz — cada serviço (`backend`, `frontend`) terá seu próprio `Dockerfile`/contexto de build isolado, exatamente como já planejado nas seções "7" e "11" deste documento. Este arquivo existe exclusivamente para o mecanismo de preview/publicação do ambiente Brixly e **deverá ser removido antes da entrega final** do teste, caso se confirme que não é necessário no ambiente de execução real (Docker) — o que é a expectativa, já que o Compose builda `frontend/` e `backend/` isoladamente, sem depender de nenhum orquestrador na raiz do repositório.

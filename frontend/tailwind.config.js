@@ -7,6 +7,8 @@ export default {
         bg: "var(--bg)", surface: "var(--surface)", ink: "var(--ink)", muted: "var(--muted)",
         line: "var(--line)", accent: "var(--accent)", "accent-ink": "var(--accent-ink)",
         "accent-soft": "var(--accent-soft)",
+        danger: "var(--danger)", "danger-soft": "var(--danger-soft)", "danger-line": "var(--danger-line)",
+        success: "var(--success)", "success-soft": "var(--success-soft)", "success-line": "var(--success-line)",
       },
       fontFamily: { display: "var(--font-display)", body: "var(--font-body)" },
       fontSize: {

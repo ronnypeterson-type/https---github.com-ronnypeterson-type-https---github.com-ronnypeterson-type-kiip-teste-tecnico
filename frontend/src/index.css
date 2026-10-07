@@ -12,6 +12,12 @@
   --accent: #C2410C;
   --accent-ink: #FFFFFF;
   --accent-soft: #FBE7DC;
+  --danger: #B91C1C;
+  --danger-soft: #FEF2F2;
+  --danger-line: #FECACA;
+  --success: #15803D;
+  --success-soft: #F0FDF4;
+  --success-line: #BBF7D0;
   --font-display: 'Fraunces', Georgia, serif;
   --font-body: 'Inter', system-ui, sans-serif;
   --radius: 10px;
@@ -34,6 +40,11 @@
   .btn-primary { @apply bg-accent text-accent-ink hover:brightness-110 active:translate-y-px; }
   .btn-ghost { @apply border border-line text-ink hover:bg-surface; }
   .card { @apply rounded-ui-lg border border-line bg-surface p-6 shadow-ui; }
+  .alert-danger { @apply rounded-ui border border-danger-line bg-danger-soft p-3 text-sm text-danger; }
+  .alert-success { @apply rounded-ui border border-success-line bg-success-soft p-3 text-sm text-success; }
+  .badge-ativo { @apply rounded-full bg-success-soft px-2 py-0.5 text-xs font-semibold text-success; }
+  .badge-cancelado { @apply rounded-full bg-line px-2 py-0.5 text-xs font-semibold text-muted; }
+  .btn-danger { @apply bg-danger text-accent-ink hover:brightness-110; }
   /* WhatsApp flutuante (celular): canto inferior direito, acima da barra do iPhone; o <main> leva pb-24 */
   .wa-float { @apply fixed right-4 z-50 inline-flex size-14 items-center justify-center rounded-full bg-accent text-accent-ink shadow-ui md:hidden; bottom: calc(1rem + env(safe-area-inset-bottom)); }
 }
