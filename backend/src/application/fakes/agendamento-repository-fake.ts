@@ -58,4 +58,20 @@ export class AgendamentoRepositoryFake implements AgendamentoRepository {
     this.agendamentos.set(id, atualizado)
     return atualizado
   }
+
+  // Implementação fake: não há concorrência real a serializar numa
+  // estrutura em memória de processo único usada apenas em testes
+  // sequenciais — apenas chama `operacao(this)` diretamente, sem lock.
+  // `colaboradorId` não é usado aqui (ver interface para a justificativa).
+  // Passa `this` (não uma cópia) porque não há necessidade de isolar
+  // estado entre chamadas nesta implementação fake — ela não tem nenhum
+  // campo mutável de "cliente ativo" para começar (diferente da
+  // implementação Prisma, que precisa criar uma nova instância vinculada
+  // à transação).
+  async executarComLockDoColaborador<T>(
+    _colaboradorId: number,
+    operacao: (agendamentoRepositoryTransacional: AgendamentoRepository) => Promise<T>,
+  ): Promise<T> {
+    return operacao(this)
+  }
 }

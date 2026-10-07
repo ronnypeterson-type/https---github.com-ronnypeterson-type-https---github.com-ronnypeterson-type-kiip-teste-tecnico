@@ -406,3 +406,29 @@ O enunciado exige a consulta de saldo/períodos aquisitivos, mas não define exp
 **Decisão**: a API usará `DELETE /agendamentos/:id` para solicitar o cancelamento, mas a operação será um cancelamento lógico — altera o campo `status` para `cancelado`, preservando o registro no banco.
 
 **Motivo**: R6 exige que o cancelamento devolva os dias ao saldo disponível; preservar o registro (em vez de excluí-lo fisicamente) mantém o histórico do colaborador e permite demonstrar o estado anterior do agendamento, além de ser consistente com a decisão já registrada de que o saldo é sempre recomputado a partir dos agendamentos ativos, nunca armazenado.
+
+---
+
+## Atualização do plano — decisões de persistência e concorrência
+
+Esta seção registra decisões tomadas na etapa de implementação da persistência real (Prisma/PostgreSQL) e da proteção contra concorrência no agendamento, realizada após a implementação e commit dos application services com repositories fake. O conteúdo original deste `PLAN.md` e as atualizações anteriores foram mantidos integralmente.
+
+### 1. Ajuste mínimo na interface `AgendamentoRepository`
+
+A interface `AgendamentoRepository`, definida na etapa anterior (camada de aplicação), não previa nenhum mecanismo de transação — cada método (`buscarPorId`, `listarAtivosPorColaborador`, `criar`, etc.) era uma operação independente. Isso deixava uma lacuna real: o fluxo de agendamento (ler agendamentos ativos para validar R3/R5 → inserir o novo agendamento) não tinha nenhuma garantia de atomicidade entre a leitura e a escrita, criando risco de corrida entre duas requisições concorrentes para o mesmo colaborador (risco já identificado na análise arquitetural anterior).
+
+**Decisão**: foi adicionado um único método à interface, `executarComLockDoColaborador<T>(colaboradorId: number, operacao: (agendamentoRepositoryTransacional: AgendamentoRepository) => Promise<T>): Promise<T>`, que executa `operacao` (fornecida pelo application service, contendo a orquestração de R3/R5 e a chamada de criação) dentro de uma transação que bloqueia a linha do colaborador correspondente. `operacao` recebe como argumento um `AgendamentoRepository` com escopo da própria transação — todas as chamadas que precisam ocorrer dentro do lock usam esse repository recebido, nunca uma referência externa a outra instância.
+
+**Motivo**: essa é a menor mudança de interface capaz de resolver o problema de concorrência corretamente, sem transformar a camada de aplicação em um framework de Unit of Work. O repository continua sem conhecer nenhuma regra de negócio — ele apenas inicia a transação/lock e delega toda a lógica para o callback, que é escrito e controlado inteiramente pelo application service (`agendarFerias`). A implementação fake (em memória) apenas chama o callback diretamente (passando a própria instância), pois não há concorrência real a serializar numa estrutura em memória de processo único usada em testes sequenciais.
+
+Ponto de atenção corrigido durante a implementação: a primeira versão desta interface usava um campo mutável (`clienteAtivo`) na implementação Prisma, temporariamente reatribuído durante a transação — um bug real sob concorrência, pois duas chamadas simultâneas na mesma instância de repository (o padrão normal de uma aplicação, que reaproveita uma única instância entre requisições) poderiam sobrescrever esse campo uma da outra. A correção, refletida na assinatura final acima, elimina qualquer estado mutável: cada chamada de `executarComLockDoColaborador` cria uma nova instância local do repository, vinculada ao cliente de transação daquela chamada específica, e a passa como argumento ao callback — nunca reaproveitando nem compartilhando esse objeto entre chamadas concorrentes.
+
+### 2. Mecanismo de lock escolhido: `SELECT ... FOR UPDATE`
+
+**Decisão**: a proteção de concorrência usa `SELECT id FROM colaboradores WHERE id = :id FOR UPDATE` (via `Prisma.sql`/`$queryRaw`, dentro de `prisma.$transaction`), bloqueando a linha do colaborador até o fim da transação — não foi usado `SERIALIZABLE` nem lock distribuído/Redis/fila.
+
+**Motivo**: `FOR UPDATE` na linha do colaborador é suficiente para serializar, na prática, apenas as operações de agendamento do MESMO colaborador (outros colaboradores continuam sendo atendidos em paralelo, sem bloqueio), com o menor custo e complexidade possível — exatamente o escopo do teste, que não exige otimização de concorrência global nem infraestrutura adicional. `SERIALIZABLE` mudaria o nível de isolamento de toda a transação (com necessidade de lógica de retry em caso de falha de serialização), uma complexidade desnecessária quando o lock direcionado já resolve o problema.
+
+### 3. Validação da proteção de concorrência
+
+Esta decisão foi implementada e validada estaticamente (type-check, build, revisão de código), mas a prova de que o lock efetivamente serializa duas transações concorrentes só pode ser obtida executando o teste de concorrência (`tests/integration/concorrencia-agendamento.test.ts`) contra um PostgreSQL real — o que não foi possível nesta etapa, pois este ambiente de desenvolvimento não possui PostgreSQL disponível. Essa validação externa permanece pendente, como já registrado na seção "16. Validação externa" do plano original.

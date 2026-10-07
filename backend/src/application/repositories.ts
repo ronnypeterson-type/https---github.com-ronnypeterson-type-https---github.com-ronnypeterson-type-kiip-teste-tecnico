@@ -57,4 +57,40 @@ export interface AgendamentoRepository {
   ): Promise<Agendamento[]>
   listarTodosPorColaborador(colaboradorId: number): Promise<Agendamento[]>
   cancelar(id: number): Promise<Agendamento>
+
+  /**
+   * Executa `operacao` dentro de uma transação de banco que bloqueia a
+   * linha do colaborador `colaboradorId` (via `SELECT ... FOR UPDATE`)
+   * durante toda a duração da operação — necessário para que o fluxo
+   * "ler saldo/sobreposição atual → validar R3/R5 → inserir
+   * agendamento" seja atômico em relação a outras requisições
+   * concorrentes para o MESMO colaborador (ver PLAN.md, seção
+   * "Atualização do plano — decisões de persistência e concorrência").
+   *
+   * IMPORTANTE: `operacao` recebe como argumento um
+   * `AgendamentoRepository` com ESCOPO DA TRANSAÇÃO — todas as
+   * chamadas aos métodos deste repository recebido (nunca do
+   * repository original, fechado no closure de quem chamou) devem ser
+   * feitas através dele, para que de fato aconteçam dentro da mesma
+   * transação/lock. Esse repository de escopo é um objeto novo e
+   * imutável criado a cada chamada — não há nenhum estado mutável
+   * compartilhado entre chamadas concorrentes (ver implementação
+   * Prisma para a garantia concreta).
+   *
+   * Este método NÃO contém nenhuma regra de negócio: apenas inicia a
+   * transação e o lock, e delega toda a lógica (leitura, validação R1-R6,
+   * escrita) para o callback `operacao`, que é fornecido pelo
+   * application service — a orquestração das regras continua
+   * inteiramente no service, nunca no repository.
+   *
+   * A implementação fake (em memória, usada nos testes desta e das
+   * etapas anteriores) não tem concorrência real para serializar — por
+   * isso apenas chama `operacao(this)` diretamente, sem nenhum lock
+   * (não há necessidade de lock numa estrutura em memória de processo
+   * único usada só em testes sequenciais).
+   */
+  executarComLockDoColaborador<T>(
+    colaboradorId: number,
+    operacao: (agendamentoRepositoryTransacional: AgendamentoRepository) => Promise<T>,
+  ): Promise<T>
 }

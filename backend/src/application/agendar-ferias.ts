@@ -35,11 +35,25 @@
 // responsabilidade de excluir cancelados é do repository, não desta
 // orquestração nem do domínio.
 //
-// Esta função NÃO implementa nenhuma transação de banco — a interface
-// de repository está preparada para que a futura implementação Prisma
-// execute toda a sequência de leitura+escrita dentro de uma transação
-// (ver PLAN.md/análise de concorrência); isso será resolvido junto do
-// repository Prisma, não nesta etapa.
+// Concorrência: todo o trecho que lê o estado atual do colaborador
+// (agendamentos ativos, para R3/R5) e em seguida grava o novo
+// agendamento é executado dentro de `agendamentoRepository
+// .executarComLockDoColaborador(...)` — isso garante, na implementação
+// Prisma real, que duas requisições concorrentes de agendamento para o
+// MESMO colaborador nunca validem R3/R5 contra o mesmo estado
+// desatualizado simultaneamente (ver PLAN.md, seção "Atualização do
+// plano — decisões de persistência e concorrência"). O repository não
+// participa da decisão de negócio — apenas serializa o acesso; toda a
+// orquestração (R1-R6) continua sendo feita pelo service, dentro do
+// callback.
+//
+// IMPORTANTE: dentro do callback, todas as chamadas usam o parâmetro
+// `agendamentoRepositoryTransacional` (recebido do próprio
+// `executarComLockDoColaborador`), nunca a variável `agendamentoRepository`
+// do closure externo. Isso garante que, na implementação Prisma, as
+// leituras/escrita realmente aconteçam dentro da mesma transação/lock —
+// usar a variável externa acidentalmente faria essas operações
+// ocorrerem FORA da transação, anulando a proteção de concorrência.
 
 import { addDays, type CalendarDate } from "../utils/calendar-date.js"
 import { calcularPeriodoAquisitivo } from "../domain/periodo-aquisitivo.js"
@@ -104,36 +118,50 @@ export async function agendarFerias(
   // R6 — data de início futura (não depende de dados do banco).
   validarAgendamentoFuturo(entrada.dataInicio, hoje)
 
-  // R3 — fracionamento, considerando somente os agendamentos ativos do
-  // MESMO período aquisitivo escolhido.
-  const agendamentosAtivosDoPeriodo = await agendamentoRepository.listarAtivosPorColaboradorEPeriodo(
+  // A partir daqui, a leitura do estado atual (R3/R5) e a escrita do
+  // novo agendamento ocorrem dentro de uma única transação com lock na
+  // linha do colaborador — ver cabeçalho do arquivo e a interface
+  // `AgendamentoRepository.executarComLockDoColaborador`.
+  const agendamento = await agendamentoRepository.executarComLockDoColaborador(
     entrada.colaboradorId,
-    entrada.periodoNumero,
-  )
-  const estadoFracionamento = derivarEstadoFracionamento(
-    agendamentosAtivosDoPeriodo.map((agendamento) => agendamento.quantidadeDias),
-  )
-  validarNovoPeriodo(estadoFracionamento, entrada.quantidadeDias)
+    async (agendamentoRepositoryTransacional) => {
+      // R3 — fracionamento, considerando somente os agendamentos ativos
+      // do MESMO período aquisitivo escolhido. Usa explicitamente o
+      // repository TRANSACIONAL recebido como parâmetro, não a
+      // variável `agendamentoRepository` do closure externo (ver
+      // cabeçalho do arquivo).
+      const agendamentosAtivosDoPeriodo =
+        await agendamentoRepositoryTransacional.listarAtivosPorColaboradorEPeriodo(
+          entrada.colaboradorId,
+          entrada.periodoNumero,
+        )
+      const estadoFracionamento = derivarEstadoFracionamento(
+        agendamentosAtivosDoPeriodo.map((agendamento) => agendamento.quantidadeDias),
+      )
+      validarNovoPeriodo(estadoFracionamento, entrada.quantidadeDias)
 
-  // R5 — sobreposição, considerando TODOS os agendamentos ativos do
-  // colaborador, independentemente do período aquisitivo.
-  const agendamentosAtivosDoColaborador =
-    await agendamentoRepository.listarAtivosPorColaborador(entrada.colaboradorId)
-  const intervalosExistentes: IntervaloFerias[] = agendamentosAtivosDoColaborador.map(
-    (agendamento) => ({
-      dataInicio: agendamento.dataInicio,
-      dataFim: addDays(agendamento.dataInicio, agendamento.quantidadeDias - 1),
-    }),
-  )
-  validarSemSobreposicao(intervalosExistentes, { dataInicio: entrada.dataInicio, dataFim })
+      // R5 — sobreposição, considerando TODOS os agendamentos ativos do
+      // colaborador, independentemente do período aquisitivo.
+      const agendamentosAtivosDoColaborador =
+        await agendamentoRepositoryTransacional.listarAtivosPorColaborador(entrada.colaboradorId)
+      const intervalosExistentes: IntervaloFerias[] = agendamentosAtivosDoColaborador.map(
+        (agendamento) => ({
+          dataInicio: agendamento.dataInicio,
+          dataFim: addDays(agendamento.dataInicio, agendamento.quantidadeDias - 1),
+        }),
+      )
+      validarSemSobreposicao(intervalosExistentes, { dataInicio: entrada.dataInicio, dataFim })
 
-  // Todas as regras passaram — persiste o agendamento.
-  const agendamento = await agendamentoRepository.criar({
-    colaboradorId: entrada.colaboradorId,
-    periodoNumero: entrada.periodoNumero,
-    dataInicio: entrada.dataInicio,
-    quantidadeDias: entrada.quantidadeDias,
-  })
+      // Todas as regras passaram — persiste o agendamento, também
+      // através do repository transacional.
+      return agendamentoRepositoryTransacional.criar({
+        colaboradorId: entrada.colaboradorId,
+        periodoNumero: entrada.periodoNumero,
+        dataInicio: entrada.dataInicio,
+        quantidadeDias: entrada.quantidadeDias,
+      })
+    },
+  )
 
   // R7 — valores financeiros, apenas para a resposta (não é validação).
   const valores = calcularValoresFerias(colaborador.salarioCentavos, entrada.quantidadeDias)
