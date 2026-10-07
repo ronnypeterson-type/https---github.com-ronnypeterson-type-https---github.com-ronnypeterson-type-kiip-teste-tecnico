@@ -4,6 +4,7 @@ node_modules/
 # Build / artefatos gerados
 dist/
 build/
+*.tsbuildinfo
 
 # Variáveis de ambiente
 .env
