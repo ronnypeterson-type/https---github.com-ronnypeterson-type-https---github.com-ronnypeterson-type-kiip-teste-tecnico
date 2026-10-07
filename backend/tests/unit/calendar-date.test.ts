@@ -4,8 +4,10 @@ import {
   addYears,
   compareCalendarDates,
   createCalendarDate,
+  DayOfWeek,
   diffInDays,
   fromISODateString,
+  getDayOfWeek,
   isAfter,
   isBefore,
   isEqual,
@@ -313,6 +315,45 @@ describe("CalendarDate", () => {
       expect(isAfter(b, a)).toBe(true)
 
       expect(isEqual(a, a)).toBe(true)
+    })
+  })
+
+  describe("getDayOfWeek", () => {
+    // Todos os valores abaixo foram verificados por fonte independente
+    // deste código (utilitário `date` do sistema operacional Linux, não
+    // `Date` do JavaScript) antes de serem fixados como expectativa.
+
+    it("1970-01-01 é quinta-feira (referência histórica conhecida)", () => {
+      expect(getDayOfWeek(createCalendarDate(1970, 1, 1))).toBe(DayOfWeek.Thursday)
+    })
+
+    it("uma semana completa de outubro de 2026 (05/10 a 11/10)", () => {
+      expect(getDayOfWeek(createCalendarDate(2026, 10, 5))).toBe(DayOfWeek.Monday)
+      expect(getDayOfWeek(createCalendarDate(2026, 10, 6))).toBe(DayOfWeek.Tuesday)
+      expect(getDayOfWeek(createCalendarDate(2026, 10, 7))).toBe(DayOfWeek.Wednesday)
+      expect(getDayOfWeek(createCalendarDate(2026, 10, 8))).toBe(DayOfWeek.Thursday)
+      expect(getDayOfWeek(createCalendarDate(2026, 10, 9))).toBe(DayOfWeek.Friday)
+      expect(getDayOfWeek(createCalendarDate(2026, 10, 10))).toBe(DayOfWeek.Saturday)
+      expect(getDayOfWeek(createCalendarDate(2026, 10, 11))).toBe(DayOfWeek.Sunday)
+    })
+
+    it("2000-01-01 é sábado (travessia de século, ano bissexto)", () => {
+      expect(getDayOfWeek(createCalendarDate(2000, 1, 1))).toBe(DayOfWeek.Saturday)
+    })
+
+    it("1900-01-01 é segunda-feira (travessia de século, ano NÃO bissexto)", () => {
+      expect(getDayOfWeek(createCalendarDate(1900, 1, 1))).toBe(DayOfWeek.Monday)
+    })
+
+    it("2024-02-29 é quinta-feira (dia de calendário que só existe em ano bissexto)", () => {
+      expect(getDayOfWeek(createCalendarDate(2024, 2, 29))).toBe(DayOfWeek.Thursday)
+    })
+
+    it("dias consecutivos sempre avançam exatamente um dia da semana, inclusive atravessando sábado->domingo", () => {
+      const sabado = createCalendarDate(2026, 10, 10)
+      const domingo = addDays(sabado, 1)
+      expect(getDayOfWeek(sabado)).toBe(DayOfWeek.Saturday)
+      expect(getDayOfWeek(domingo)).toBe(DayOfWeek.Sunday)
     })
   })
 })

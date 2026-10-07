@@ -206,6 +206,53 @@ export function addYears(date: CalendarDate, years: number): CalendarDate {
   return { year: targetYear, month: date.month, day }
 }
 
+/**
+ * Dia da semana de uma data de calendário.
+ *
+ * Convenção adotada (compatível com `Date.getDay()` do JavaScript, para
+ * facilitar leitura por quem já conhece essa convenção — mas calculada
+ * aqui inteiramente por aritmética de calendário, sem usar `Date`):
+ *   domingo = 0, segunda = 1, terça = 2, quarta = 3,
+ *   quinta = 4, sexta = 5, sábado = 6.
+ */
+export enum DayOfWeek {
+  Sunday = 0,
+  Monday = 1,
+  Tuesday = 2,
+  Wednesday = 3,
+  Thursday = 4,
+  Friday = 5,
+  Saturday = 6,
+}
+
+/**
+ * Calcula o dia da semana de uma data de calendário, por aritmética
+ * inteira (módulo), reaproveitando o "dia absoluto" já usado por
+ * `toAbsoluteDays`/`addDays` — sem usar `Date`, sem timezone, sem
+ * biblioteca externa.
+ *
+ * Derivação: `EPOCH_1970_IN_DAYS_SINCE_YEAR_1` (já definida acima) é o dia
+ * absoluto de 1970-01-01 na época de `toAbsoluteDays` (0001-01-01). A data
+ * 1970-01-01 é um fato histórico de calendário civil, verificável de
+ * forma independente deste código (confirmado via utilitário `date` do
+ * sistema operacional, não via `Date` do JavaScript): foi uma
+ * quinta-feira. Logo, `toAbsoluteDays(data) - EPOCH_1970_IN_DAYS_SINCE_YEAR_1`
+ * é a quantidade de dias desde uma quinta-feira conhecida, e
+ * `((diferença mod 7) + 7) mod 7` dá o deslocamento em dias a partir
+ * dessa quinta-feira (o `+7 mod 7` extra trata diferenças negativas,
+ * para datas anteriores a 1970, garantindo um resultado sempre no
+ * intervalo [0, 6]). Quinta-feira é `DayOfWeek.Thursday` (4) na
+ * convenção acima, então o dia da semana final é
+ * `(4 + deslocamento) mod 7`.
+ */
+export function getDayOfWeek(date: CalendarDate): DayOfWeek {
+  const diasDesde1970 = toAbsoluteDays(date) - EPOCH_1970_IN_DAYS_SINCE_YEAR_1
+  const deslocamento = ((diasDesde1970 % 7) + 7) % 7
+  const diaDaSemana = (DayOfWeek.Thursday + deslocamento) % 7
+
+  return diaDaSemana as DayOfWeek
+}
+
 /** Formata um CalendarDate como string "YYYY-MM-DD". */
 export function toISODateString(date: CalendarDate): string {
   const yyyy = String(date.year).padStart(4, "0")
