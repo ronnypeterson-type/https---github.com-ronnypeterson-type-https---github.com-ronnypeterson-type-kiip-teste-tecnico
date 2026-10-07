@@ -560,3 +560,48 @@ Esta adaptação foi validada chamando diretamente as funções reais do módulo
 ### Esta adaptação NÃO faz parte da arquitetura de execução final
 
 O `docker-compose.yml` final não lerá nem dependerá, em nenhum momento, deste `package.json` da raiz — cada serviço (`backend`, `frontend`) terá seu próprio `Dockerfile`/contexto de build isolado, exatamente como já planejado nas seções "7" e "11" deste documento. Este arquivo existe exclusivamente para o mecanismo de preview/publicação do ambiente Brixly e **deverá ser removido antes da entrega final** do teste, caso se confirme que não é necessário no ambiente de execução real (Docker) — o que é a expectativa, já que o Compose builda `frontend/` e `backend/` isoladamente, sem depender de nenhum orquestrador na raiz do repositório.
+
+---
+
+## Atualização do plano — implementação do Docker Compose
+
+Esta seção registra a implementação real do `docker-compose.yml` e dos `Dockerfile`s de `backend/` e `frontend/`, confirmando e detalhando a arquitetura já aprovada na etapa de planejamento anterior. O conteúdo original deste `PLAN.md` e todas as atualizações anteriores foram mantidos integralmente. Nenhuma regra R1-R7, nenhum caso de uso e nenhuma estrutura de domínio foram alterados por esta etapa — apenas arquivos de infraestrutura de execução (`Dockerfile`, `docker-compose.yml`, `nginx.conf`, `docker-entrypoint.sh`) foram criados.
+
+### 1. Arquitetura dos containers
+
+Três serviços: `postgres` (`postgres:16-alpine`), `backend` (build multi-stage de `backend/Dockerfile`, Node 22 Alpine) e `frontend` (build multi-stage de `frontend/Dockerfile`: Node 22 Alpine para o `vite build`, servido por `nginx:alpine` na camada final). Apenas o `frontend` publica uma porta ao host (`8080:80`); `postgres` e `backend` só existem na rede interna do Compose, nunca expostos diretamente.
+
+### 2. Fluxo de inicialização (`docker compose up --build`)
+
+1. `postgres` sobe; seu `healthcheck` (`pg_isready -U postgres -d controle_ferias`) precisa passar antes de qualquer outro serviço depender dele.
+2. `backend` só inicia depois que `postgres` está `service_healthy` (`depends_on: postgres: condition: service_healthy`). Ao iniciar, `docker-entrypoint.sh` roda `npx prisma migrate deploy` (aplica as migrations já versionadas em `prisma/migrations/`, sem interação, sem gerar migration nova) e só então executa `node dist/http/server.js`.
+3. `frontend` builda com `VITE_API_URL=/api` como build `ARG` (ver item 4), gerando um bundle estático já com essa URL embutida; o container de runtime é só `nginx:alpine` servindo esses arquivos — nenhum processo Node roda no container final do frontend.
+4. Nenhum passo manual (instalação de dependências, geração do Prisma Client, aplicação de migration, criação de banco/tabelas) é necessário fora do que os próprios `Dockerfile`s e o `docker-entrypoint.sh` já executam.
+
+### 3. Decisão Nginx + `/api`
+
+O navegador do usuário nunca recebe o hostname `backend` em nenhuma resposta — ele só conhece a origem publicada pelo Compose (`http://localhost:8080`, ou o host:porta real no ambiente de validação). O `nginx.conf` do frontend serve os arquivos estáticos do build e faz proxy reverso de `location /api/` para `proxy_pass http://backend:3001/` (barra final em ambos — é o que faz o Nginx reescrever o caminho removendo o prefixo `/api`, já que nenhuma rota do backend tem esse prefixo). O hostname `backend` só é resolvido pelo Nginx, via o DNS interno da rede do Compose — nunca pelo navegador. SPA fallback (`try_files $uri $uri/ /index.html`) garante que recarregar uma rota de cliente não retorne 404.
+
+Esta decisão foi validada localmente (sem Docker, que não está disponível neste ambiente Brixly — ver item 7): o `nginx.conf` real foi testado com `nginx -t` (sintaxe), e depois rodando um `nginx` real nesta máquina, com o hostname `backend` substituído por `localhost` apenas para o teste (já que não existe rede Docker aqui), fazendo requisições HTTP reais (`GET`, `POST` com body JSON, `DELETE` com múltiplos segmentos de path, e uma rota inexistente para o SPA fallback) contra o backend real deste projeto rodando localmente. Todas as requisições chegaram corretamente ao backend com o caminho, método e corpo esperados (confirmado pelos códigos de erro retornados: 500 por falta de PostgreSQL, nunca 404 de rota incorreta ou 400 de corpo corrompido); o SPA fallback serviu `index.html` corretamente para uma rota desconhecida.
+
+### 4. Estratégia Prisma
+
+`prisma generate` roda explicitamente no stage de build do `backend/Dockerfile`, depois de copiar `prisma/schema.prisma` e antes do `tsc` (que depende dos tipos gerados). O Prisma Client gerado (`node_modules/.prisma` e `node_modules/@prisma`) é copiado do stage de build para o stage de runtime, evitando gerar novamente numa imagem sem as devDependencies. `prisma migrate deploy` (nunca `migrate dev`, que é interativo) roda no `docker-entrypoint.sh`, a cada início do container, aplicando as migrations já versionadas contra o `DATABASE_URL` fornecido pelo `docker-compose.yml` (nunca `localhost` dentro do container — é o nome do serviço `postgres`).
+
+### 5. Estratégia PostgreSQL
+
+`postgres:16-alpine` (versão fixada, nunca `latest`), com `POSTGRES_DB`/`POSTGRES_USER`/`POSTGRES_PASSWORD` de desenvolvimento/local (nunca credenciais reais), volume nomeado (`pgdata`) para persistir dados entre reinicializações do Compose, e `healthcheck` via `pg_isready`. Nenhuma porta publicada ao host — só acessível pela rede interna do Compose, pelo serviço `backend`.
+
+### 6. Estratégia de testes
+
+Os testes unitários (domínio R1-R7), de application (com repositories fake) e HTTP (com repositories fake, via Supertest) continuam rodando exatamente como antes, sem nenhuma dependência de Docker/PostgreSQL — nenhum desses arquivos foi alterado nesta etapa. Os testes de integração (`tests/integration/`, que exigem PostgreSQL real) permanecem com `describe.skip`, exatamente como já estavam — **decisão explícita de não automatizar a remoção do skip nesta etapa**, para não mascarar a diferença entre "testado" e "não testado contra banco real". Foi adicionado um script `npm run test:integration` (`vitest run tests/integration`) que roda especificamente esses arquivos — enquanto permanecerem com `.skip`, o resultado seguirá sendo reportado como "skipped", nunca "passed". Para validar de fato contra PostgreSQL real (ambiente externo com Docker), os passos continuam sendo os já documentados no cabeçalho de cada arquivo de teste de integração: subir o Postgres, apontar `DATABASE_URL`, rodar `prisma migrate deploy`, remover manualmente o `.skip`, e então `npm run test:integration`.
+
+### 7. Limitações de validação no ambiente Brixly
+
+Docker não está disponível neste ambiente de desenvolvimento (Brixly) — confirmado novamente antes desta etapa. Por isso, `docker compose up --build` **não foi executado** nesta sessão, e não deve ser considerado validado até que isso ocorra em um ambiente externo com Docker real. O que foi validado nesta etapa, de forma real (não apenas por leitura de código):
+- Sintaxe do `nginx.conf` (via `nginx -t` com o binário Nginx real instalado neste host).
+- Comportamento funcional do proxy `/api/*` e do SPA fallback, rodando um Nginx real localmente (com o hostname `backend` substituído por `localhost` apenas para possibilitar o teste fora de uma rede Docker) contra o backend real deste projeto.
+- Mecanismo de `VITE_API_URL` em tempo de build: confirmado por execução real (`VITE_API_URL=/api npm run build`) que o bundle gerado contém `"/api"` embutido e não contém mais `localhost:3001`.
+- Type-check e build do backend e do frontend, e a suíte completa de testes (337 passando no backend, 21 no frontend, 24 skipped de integração) — sem regressão em relação à etapa anterior.
+
+O que permanece como validação externa pendente (idêntico ao já registrado nas seções "16" do plano original e nas atualizações de blocos anteriores): a execução real de `docker compose up --build` de ponta a ponta numa máquina limpa, incluindo a confirmação de que a migration é aplicada automaticamente, que os três serviços se comunicam corretamente dentro da rede real do Docker, e que os testes de integração passam de fato contra um PostgreSQL real.

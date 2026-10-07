@@ -1,0 +1,70 @@
+# Orquestração completa do sistema de controle de férias.
+#
+# `docker compose up --build` em uma máquina limpa (sem Node, sem
+# PostgreSQL, sem nenhuma configuração manual prévia) deve:
+#   1. Subir o PostgreSQL e esperar seu healthcheck ficar saudável.
+#   2. Buildar e iniciar o backend, que aplica as migrations do Prisma
+#      (prisma migrate deploy, dentro de docker-entrypoint.sh) e só
+#      então começa a escutar — sem nenhum passo manual de banco.
+#   3. Buildar e iniciar o frontend (Vite build + Nginx), já com
+#      VITE_API_URL=/api embutido no bundle.
+#   4. Expor APENAS a porta do frontend (8080) ao host — nem o
+#      PostgreSQL nem o backend têm porta publicada; o navegador nunca
+#      enxerga "backend:3001", só fala com o Nginx do frontend, que
+#      repassa /api/* internamente.
+#
+# Arquitetura de comunicação:
+#   Browser -> http://localhost:8080 -> Nginx (frontend) -> /api/* -> backend:3001 -> Prisma -> PostgreSQL
+#
+# Credenciais abaixo são de desenvolvimento/local apenas (ver seção
+# "Adaptação de preview da Brixly" e demais decisões em PLAN.md) — nunca
+# usar estes valores em produção real.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: controle_ferias
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d controle_ferias"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Sem `ports:` — o PostgreSQL só é acessível pela rede interna do
+    # Compose (serviço `backend`), nunca pelo host/navegador.
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      PORT: 3001
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/controle_ferias
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    # Sem `ports:` — só acessível pela rede interna do Compose (serviço
+    # `frontend`, via proxy do Nginx), nunca diretamente pelo navegador.
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: /api
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_started
+
+volumes:
+  pgdata:
