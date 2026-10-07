@@ -14,7 +14,35 @@ momento da execução (R6 exige início estritamente futuro) — os
 exemplos abaixo foram verificados com "hoje" = `2026-10-07`. Ajuste as
 datas conforme a data real de quem for reproduzir os exemplos.
 
-## 1. Criar colaborador
+## 1. Listar colaboradores
+
+Adicionado na etapa do frontend para permitir a seleção de um
+colaborador já existente na UI — ver PLAN.md ("Atualização do plano —
+decisões do frontend") para a decisão completa. É um endpoint somente
+leitura; a criação continua exclusivamente via `POST /colaboradores`.
+
+```bash
+curl http://localhost:3001/colaboradores
+```
+
+Resposta (200):
+
+```json
+{
+  "colaboradores": [
+    { "id": 1, "nome": "Ana", "dataAdmissao": "2023-01-10", "salarioMensal": "3500.00" },
+    { "id": 2, "nome": "Bruno", "dataAdmissao": "2022-05-01", "salarioMensal": "4200.00" }
+  ]
+}
+```
+
+Sem colaboradores cadastrados (200, lista vazia — não é erro):
+
+```json
+{ "colaboradores": [] }
+```
+
+## 2. Criar colaborador
 
 ```bash
 curl -X POST http://localhost:3001/colaboradores \
@@ -61,7 +89,7 @@ curl -X POST http://localhost:3001/colaboradores \
 { "error": { "code": "ENTRADA_INVALIDA", "message": "O corpo da requisição não é um JSON válido." } }
 ```
 
-## 2. Consultar períodos (saldo) de um colaborador
+## 3. Consultar períodos (saldo) de um colaborador
 
 ```bash
 curl http://localhost:3001/colaboradores/1/periodos
@@ -99,7 +127,7 @@ curl http://localhost:3001/colaboradores/999/periodos
 { "error": { "code": "NAO_ENCONTRADO", "message": "Colaborador com id 999 não encontrado." } }
 ```
 
-## 3. Agendar férias
+## 4. Agendar férias
 
 ```bash
 curl -X POST http://localhost:3001/colaboradores/1/ferias \
@@ -192,7 +220,7 @@ curl -X POST http://localhost:3001/colaboradores/1/ferias \
 { "error": { "code": "R6", "message": "As férias só podem ser agendadas para uma data de início posterior a hoje..." } }
 ```
 
-## 4. Cancelar agendamento (cancelamento lógico)
+## 5. Cancelar agendamento (cancelamento lógico)
 
 ```bash
 curl -X DELETE http://localhost:3001/colaboradores/1/ferias/1
@@ -224,7 +252,7 @@ curl -X DELETE http://localhost:3001/colaboradores/1/ferias/999
 { "error": { "code": "NAO_ENCONTRADO", "message": "Agendamento com id 999 não encontrado." } }
 ```
 
-## 5. Listar agendamentos de um colaborador (inclui cancelados)
+## 6. Listar agendamentos de um colaborador (inclui cancelados)
 
 ```bash
 curl http://localhost:3001/colaboradores/1/ferias

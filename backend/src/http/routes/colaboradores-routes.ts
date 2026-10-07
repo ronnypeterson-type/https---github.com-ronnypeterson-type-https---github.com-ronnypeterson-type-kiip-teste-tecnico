@@ -9,6 +9,7 @@ export function criarColaboradoresRouter(deps: ColaboradoresControllerDependenci
   const router = Router()
   const controller = criarColaboradoresController(deps)
 
+  router.get("/colaboradores", controller.listar)
   router.post("/colaboradores", controller.criar)
   router.get("/colaboradores/:id/periodos", controller.consultarPeriodos)
 

@@ -2,6 +2,44 @@ import { describe, expect, it } from "vitest"
 import request from "supertest"
 import { criarAppDeTeste } from "./helpers/criar-app-de-teste.js"
 
+describe("GET /colaboradores", () => {
+  it("retorna lista vazia quando não há colaboradores cadastrados", async () => {
+    const { app } = criarAppDeTeste()
+
+    const response = await request(app).get("/colaboradores")
+
+    expect(response.status).toBe(200)
+    expect(response.body).toEqual({ colaboradores: [] })
+  })
+
+  it("lista os colaboradores cadastrados, com os mesmos campos de POST /colaboradores", async () => {
+    const { app } = criarAppDeTeste()
+
+    await request(app).post("/colaboradores").send({
+      nome: "Ana",
+      dataAdmissao: "2023-01-10",
+      salarioMensal: "3500.00",
+    })
+    await request(app).post("/colaboradores").send({
+      nome: "Bruno",
+      dataAdmissao: "2022-05-01",
+      salarioMensal: "4200.00",
+    })
+
+    const response = await request(app).get("/colaboradores")
+
+    expect(response.status).toBe(200)
+    expect(response.body.colaboradores).toHaveLength(2)
+    expect(response.body.colaboradores[0]).toEqual({
+      id: 1,
+      nome: "Ana",
+      dataAdmissao: "2023-01-10",
+      salarioMensal: "3500.00",
+    })
+    expect(response.body.colaboradores[1]).toMatchObject({ nome: "Bruno" })
+  })
+})
+
 describe("POST /colaboradores", () => {
   it("cria um colaborador com dados válidos", async () => {
     const { app } = criarAppDeTeste()

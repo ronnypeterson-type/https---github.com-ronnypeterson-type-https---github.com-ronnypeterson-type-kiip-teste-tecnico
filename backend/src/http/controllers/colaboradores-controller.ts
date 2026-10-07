@@ -9,6 +9,7 @@
 import type { Request, Response } from "express"
 import { criarColaborador } from "../../application/criar-colaborador.js"
 import { consultarPeriodos } from "../../application/consultar-periodos.js"
+import { listarColaboradores } from "../../application/listar-colaboradores.js"
 import type { AgendamentoRepository, ColaboradorRepository } from "../../application/repositories.js"
 import { responderComErro } from "../erros-http.js"
 import { hojeComoCalendarDate } from "../relogio.js"
@@ -27,6 +28,25 @@ export interface ColaboradoresControllerDependencias {
 
 export function criarColaboradoresController(deps: ColaboradoresControllerDependencias) {
   return {
+    async listar(_req: Request, res: Response): Promise<void> {
+      try {
+        const colaboradores = await listarColaboradores({
+          colaboradorRepository: deps.colaboradorRepository,
+        })
+
+        res.status(200).json({
+          colaboradores: colaboradores.map((colaborador) => ({
+            id: colaborador.id,
+            nome: colaborador.nome,
+            dataAdmissao: formatarData(colaborador.dataAdmissao),
+            salarioMensal: formatarCentavos(colaborador.salarioCentavos),
+          })),
+        })
+      } catch (erro) {
+        responderComErro(res, erro)
+      }
+    },
+
     async criar(req: Request, res: Response): Promise<void> {
       try {
         const body = req.body as Record<string, unknown>
