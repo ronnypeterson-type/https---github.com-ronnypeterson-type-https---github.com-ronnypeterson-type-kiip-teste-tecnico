@@ -1,0 +1,28 @@
+# Dependências
+node_modules/
+
+# Build / artefatos gerados
+dist/
+build/
+
+# Variáveis de ambiente
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# Arquivos temporários de sistema/IDE
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Infraestrutura interna da Brixly (não faz parte da entrega do teste)
+.lovable.json
+.chats/
+.checkpoints/
