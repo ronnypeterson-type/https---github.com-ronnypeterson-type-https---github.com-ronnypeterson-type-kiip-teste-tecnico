@@ -386,3 +386,23 @@ Esta atualização resolve as seguintes pendências que estavam registradas na s
 - **Modelo do agendamento**: não havia detalhamento registrado ainda sobre como o agendamento referenciaria o período aquisitivo — decidido: campo `periodo_numero` (inteiro), não uma `FOREIGN KEY`.
 
 O texto original da seção 19 não foi removido nem alterado; esta seção apenas registra que as pendências correspondentes foram resolvidas.
+
+---
+
+## Atualização do plano — decisões da camada de aplicação
+
+Esta seção registra decisões tomadas na etapa de planejamento da camada de aplicação (services/use cases que orquestram as regras R1-R7), realizada após a conclusão e commit de todo o domínio puro. O conteúdo original deste `PLAN.md` e as atualizações anteriores foram mantidos integralmente.
+
+### 1. Quantos períodos aquisitivos exibir na consulta de saldo/períodos
+
+O enunciado exige a consulta de saldo/períodos aquisitivos, mas não define explicitamente quantos períodos calculados devem ser exibidos — um colaborador antigo poderia, em tese, ter dezenas de períodos aquisitivos desde a admissão.
+
+**Decisão**: o endpoint de consulta de períodos exibirá os períodos aquisitivos do período 1 até o período aquisitivo vigente na data de hoje, inclusive.
+
+**Motivo**: essa interpretação mantém a consulta finita e coerente com a situação atual do colaborador, sem exigir um parâmetro adicional de "quantos períodos exibir" que o enunciado não pede.
+
+### 2. Forma do cancelamento na API
+
+**Decisão**: a API usará `DELETE /agendamentos/:id` para solicitar o cancelamento, mas a operação será um cancelamento lógico — altera o campo `status` para `cancelado`, preservando o registro no banco.
+
+**Motivo**: R6 exige que o cancelamento devolva os dias ao saldo disponível; preservar o registro (em vez de excluí-lo fisicamente) mantém o histórico do colaborador e permite demonstrar o estado anterior do agendamento, além de ser consistente com a decisão já registrada de que o saldo é sempre recomputado a partir dos agendamentos ativos, nunca armazenado.
